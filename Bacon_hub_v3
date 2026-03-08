@@ -1,0 +1,1454 @@
+--[[
+════════════════════════════════════════════
+         🥓 BACON HUB — V2.00.0
+════════════════════════════════════════════
+  Developer : Riquelme_Scripts
+  Owner     : Bacon_Scripts
+  Theme     : Obsidian Purple
+  Features  : Troll · Músicas · Emotes
+              Chat Global · Servidor · Scripts
+════════════════════════════════════════════
+]]
+
+-- ══════════════════════════════════════════
+-- SERVIÇOS
+-- ══════════════════════════════════════════
+local Players        = game:GetService("Players")
+local TweenService   = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService     = game:GetService("RunService")
+local CoreGui        = game:GetService("CoreGui")
+local HttpService    = game:GetService("HttpService")
+local StarterGui     = game:GetService("StarterGui")
+local Workspace      = workspace
+
+local Player = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- ══════════════════════════════════════════
+-- CONFIG
+-- ══════════════════════════════════════════
+local CFG = {
+    Version   = "V2.00.0",
+    Purple    = Color3.fromRGB(140, 60, 255),
+    PurpleDk  = Color3.fromRGB(80, 18, 160),
+    PurpleLt  = Color3.fromRGB(185, 110, 255),
+    BG        = Color3.fromRGB(7, 7, 13),
+    BGItem    = Color3.fromRGB(13, 12, 22),
+    BGSide    = Color3.fromRGB(9, 8, 18),
+    Border    = Color3.fromRGB(22, 20, 38),
+    BgImage   = "rbxassetid://11424961420",
+    Discord   = "https://discord.gg/KNxNqDCAxM",
+    DATABASE  = "https://bacon-hub-chat-default-rtdb.firebaseio.com/chatGlobal/messages",
+}
+
+-- Auto copy discord
+if setclipboard then pcall(setclipboard, CFG.Discord) end
+
+-- Limpa instância anterior
+if CoreGui:FindFirstChild("BaconHubV2") then
+    CoreGui:FindFirstChild("BaconHubV2"):Destroy()
+end
+
+-- ══════════════════════════════════════════
+-- ROOT GUI
+-- ══════════════════════════════════════════
+local Root = Instance.new("ScreenGui")
+Root.Name            = "BaconHubV2"
+Root.ResetOnSpawn    = false
+Root.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+Root.IgnoreGuiInset  = true
+
+-- Delta / mobile: tenta CoreGui, cai para PlayerGui se falhar
+local ok = pcall(function() Root.Parent = CoreGui end)
+if not ok then
+    Root.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- ══════════════════════════════════════════
+-- ESTADO GLOBAL
+-- ══════════════════════════════════════════
+local State = {
+    Open           = false,
+    Music          = nil,
+    NoClipConn     = nil,
+    SpectateConn   = nil,
+    SpectateTarget = nil,
+    LagConn        = nil,
+    LagTarget      = nil,
+    ServerLagConn  = nil,
+    MusicHistory   = {},
+    MusicIndex     = 0,
+    ChatPollConn   = nil,
+    ChatLastFetch  = 0,
+    ChatSeenIds    = {},
+    ChatMutes      = {},
+    ChatLastMsg    = {},
+}
+
+-- ══════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════
+
+-- Drag
+local function MakeDraggable(frame, handle)
+    local drag, dInput, dStart, dPos = false
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = true; dStart = i.Position; dPos = frame.Position
+            i.Changed:Connect(function()
+                if i.UserInputState == Enum.UserInputState.End then drag = false end
+            end)
+        end
+    end)
+    handle.InputChanged:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseMovement then dInput = i end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if i == dInput and drag then
+            local d = i.Position - dStart
+            frame.Position = UDim2.new(dPos.X.Scale, dPos.X.Offset + d.X, dPos.Y.Scale, dPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- Tween shorthand
+local function TW(obj, props, t, style)
+    TweenService:Create(obj, TweenInfo.new(t or 0.2, style or Enum.EasingStyle.Quad), props):Play()
+end
+
+-- Notification
+local function Notify(title, body, dur)
+    local f = Instance.new("Frame")
+    f.Size      = UDim2.new(0,290,0,68)
+    f.Position  = UDim2.new(1,10,1,-90)
+    f.BackgroundColor3 = CFG.BG
+    f.BorderSizePixel  = 0
+    f.ZIndex    = 200
+    f.Parent    = Root
+    Instance.new("UICorner",f).CornerRadius = UDim.new(0,10)
+    local s = Instance.new("UIStroke",f); s.Color = CFG.Purple; s.Thickness = 1.2; s.Transparency = 0.2
+
+    local bar = Instance.new("Frame",f)
+    bar.Size = UDim2.new(0,3,0.65,0); bar.Position = UDim2.new(0,10,0.175,0)
+    bar.BackgroundColor3 = CFG.Purple; bar.BorderSizePixel = 0
+    Instance.new("UICorner",bar).CornerRadius = UDim.new(0,4)
+
+    local t1 = Instance.new("TextLabel",f)
+    t1.Size = UDim2.new(1,-24,0,22); t1.Position = UDim2.new(0,20,0,10)
+    t1.BackgroundTransparency = 1; t1.Text = title
+    t1.TextColor3 = CFG.PurpleLt; t1.Font = Enum.Font.GothamBlack
+    t1.TextSize = 13; t1.TextXAlignment = Enum.TextXAlignment.Left; t1.ZIndex = 201
+
+    local t2 = Instance.new("TextLabel",f)
+    t2.Size = UDim2.new(1,-24,0,20); t2.Position = UDim2.new(0,20,0,35)
+    t2.BackgroundTransparency = 1; t2.Text = body
+    t2.TextColor3 = Color3.fromRGB(175,165,205); t2.Font = Enum.Font.GothamMedium
+    t2.TextSize = 11; t2.TextXAlignment = Enum.TextXAlignment.Left; t2.ZIndex = 201
+
+    TW(f,{Position=UDim2.new(1,-300,1,-90)},0.45,Enum.EasingStyle.Back)
+    task.delay(dur or 3, function()
+        TW(f,{Position=UDim2.new(1,10,1,-90)},0.4)
+        task.delay(0.45, function() pcall(function() f:Destroy() end) end)
+    end)
+end
+
+-- UICorner helper
+local function Corner(p, r) local c = Instance.new("UICorner",p); c.CornerRadius = UDim.new(0,r or 8); return c end
+local function Stroke(p, col, th, tr) local s = Instance.new("UIStroke",p); s.Color=col; s.Thickness=th or 1; s.Transparency=tr or 0; return s end
+
+-- ══════════════════════════════════════════
+-- LOGIN SCREEN
+-- ══════════════════════════════════════════
+local Login = Instance.new("Frame")
+Login.Name             = "Login"
+Login.Size             = UDim2.new(0,0,0,0)
+Login.AnchorPoint      = Vector2.new(0.5,0.5)
+Login.Position         = UDim2.new(0.5,0,0.5,0)
+Login.BackgroundColor3 = CFG.BG
+Login.BorderSizePixel  = 0
+Login.ZIndex           = 10
+Login.Parent           = Root
+Corner(Login,18)
+Stroke(Login, CFG.Purple, 1.5, 0.15)
+
+-- BG image
+local lbg = Instance.new("ImageLabel",Login)
+lbg.Size = UDim2.new(1,0,1,0); lbg.BackgroundTransparency=1
+lbg.Image = CFG.BgImage; lbg.ImageTransparency=0.65
+lbg.ScaleType = Enum.ScaleType.Crop; lbg.ZIndex=10
+
+local ldark = Instance.new("Frame",Login)
+ldark.Size=UDim2.new(1,0,1,0); ldark.BackgroundColor3=Color3.new(0,0,0)
+ldark.BackgroundTransparency=0.35; ldark.BorderSizePixel=0; ldark.ZIndex=11
+
+-- Avatar ring
+local avRing = Instance.new("Frame",Login)
+avRing.Size=UDim2.new(0,108,0,108); avRing.Position=UDim2.new(0.5,-54,0,28)
+avRing.BackgroundColor3=CFG.Purple; avRing.BorderSizePixel=0; avRing.ZIndex=12
+Corner(avRing,54)
+
+local avImg = Instance.new("ImageLabel",avRing)
+avImg.Size=UDim2.new(0,100,0,100); avImg.Position=UDim2.new(0.5,-50,0.5,-50)
+avImg.BackgroundColor3=Color3.fromRGB(20,15,35); avImg.BorderSizePixel=0; avImg.ZIndex=13
+Corner(avImg,50)
+task.spawn(function()
+    local s,img = pcall(function() return Players:GetUserThumbnailAsync(Player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420) end)
+    if s and img then avImg.Image = img end
+end)
+
+local function LLabel(text, color, size, ypos, bold)
+    local l = Instance.new("TextLabel",Login)
+    l.Size=UDim2.new(1,-20,0,size+6); l.Position=UDim2.new(0,10,0,ypos)
+    l.BackgroundTransparency=1; l.Text=text; l.TextColor3=color
+    l.Font=bold and Enum.Font.GothamBlack or Enum.Font.GothamMedium
+    l.TextSize=size; l.ZIndex=13
+    return l
+end
+LLabel("BEM-VINDO", Color3.fromRGB(220,205,255), 21, 152, true)
+LLabel(Player.Name,  CFG.PurpleLt,               15, 178, false)
+LLabel("▮ BACON HUB ACCESS GRANTED", CFG.Purple,  10, 207, false).Font = Enum.Font.Code
+
+-- Progress bar
+local pgBg = Instance.new("Frame",Login)
+pgBg.Size=UDim2.new(0,250,0,5); pgBg.Position=UDim2.new(0.5,-125,0,232)
+pgBg.BackgroundColor3=Color3.fromRGB(28,25,45); pgBg.BorderSizePixel=0; pgBg.ZIndex=13
+Corner(pgBg,4)
+
+local pgFill = Instance.new("Frame",pgBg)
+pgFill.Size=UDim2.new(0,0,1,0); pgFill.BackgroundColor3=CFG.Purple
+pgFill.BorderSizePixel=0; pgFill.ZIndex=14
+Corner(pgFill,4)
+
+-- Enter button
+local enterBtn = Instance.new("TextButton",Login)
+enterBtn.Size=UDim2.new(0,210,0,44); enterBtn.Position=UDim2.new(0.5,-105,0,248)
+enterBtn.BackgroundColor3=CFG.Purple; enterBtn.Text="▶  ENTRAR"
+enterBtn.TextColor3=Color3.new(1,1,1); enterBtn.Font=Enum.Font.GothamBlack
+enterBtn.TextSize=15; enterBtn.BorderSizePixel=0; enterBtn.ZIndex=13
+enterBtn.Active=true; enterBtn.AutoButtonColor=false
+Corner(enterBtn,10)
+
+-- Animate login in AFTER all children are built
+task.defer(function()
+    TW(Login,{Size=UDim2.new(0,320,0,312)},0.75,Enum.EasingStyle.Elastic)
+end)
+
+-- Animate login in
+TW(Login,{Size=UDim2.new(0,320,0,312)},0.75,Enum.EasingStyle.Elastic)
+
+-- ══════════════════════════════════════════
+-- FLOATING BUTTON
+-- ══════════════════════════════════════════
+local FloatBtn = Instance.new("ImageButton")
+FloatBtn.Size=UDim2.new(0,55,0,55); FloatBtn.Position=UDim2.new(0,25,0.5,-27)
+FloatBtn.BackgroundColor3=CFG.Purple; FloatBtn.Image="rbxassetid://9421679578"
+FloatBtn.Visible=false; FloatBtn.BorderSizePixel=0; FloatBtn.ZIndex=5
+FloatBtn.Parent=Root
+Corner(FloatBtn,28)
+MakeDraggable(FloatBtn,FloatBtn)
+
+-- ══════════════════════════════════════════
+-- MAIN FRAME
+-- ══════════════════════════════════════════
+local Main = Instance.new("Frame")
+Main.Name="MainFrame"; Main.Size=UDim2.new(0,700,0,470)
+Main.Position=UDim2.new(0.5,-350,0.5,-235)
+Main.BackgroundColor3=CFG.BG; Main.BorderSizePixel=0
+Main.Visible=false; Main.ZIndex=2
+Main.Parent=Root
+Corner(Main,16)
+Stroke(Main,CFG.Border,1.5,0)
+
+-- BG image + film
+local mbg = Instance.new("ImageLabel",Main)
+mbg.Size=UDim2.new(1,0,1,0); mbg.BackgroundTransparency=1
+mbg.Image=CFG.BgImage; mbg.ImageTransparency=0.52
+mbg.ScaleType=Enum.ScaleType.Crop; mbg.ZIndex=0
+
+local mfilm = Instance.new("Frame",Main)
+mfilm.Size=UDim2.new(1,0,1,0); mfilm.BackgroundColor3=Color3.new(0,0,0)
+mfilm.BackgroundTransparency=0.3; mfilm.BorderSizePixel=0; mfilm.ZIndex=1
+
+MakeDraggable(Main,Main)
+
+-- ── Sidebar ──────────────────────────────
+local Sidebar = Instance.new("Frame",Main)
+Sidebar.Size=UDim2.new(0,195,1,0); Sidebar.BackgroundColor3=CFG.BGSide
+Sidebar.BackgroundTransparency=0.05; Sidebar.BorderSizePixel=0; Sidebar.ZIndex=3
+Corner(Sidebar,16)
+
+-- right-edge fix
+local sfx = Instance.new("Frame",Sidebar)
+sfx.Size=UDim2.new(0,20,1,0); sfx.Position=UDim2.new(1,-10,0,0)
+sfx.BackgroundColor3=CFG.BGSide; sfx.BorderSizePixel=0; sfx.ZIndex=3
+
+-- Purple separator line
+local sline = Instance.new("Frame",Sidebar)
+sline.Size=UDim2.new(0,2,0.7,0); sline.Position=UDim2.new(1,-2,0.15,0)
+sline.BackgroundColor3=CFG.Purple; sline.BackgroundTransparency=0.6
+sline.BorderSizePixel=0; sline.ZIndex=4
+
+-- Logo box
+local logoF = Instance.new("Frame",Sidebar)
+logoF.Size=UDim2.new(1,-18,0,68); logoF.Position=UDim2.new(0,9,0,10)
+logoF.BackgroundColor3=CFG.PurpleDk; logoF.BackgroundTransparency=0.45
+logoF.BorderSizePixel=0; logoF.ZIndex=4
+Corner(logoF,10)
+Stroke(logoF,CFG.Purple,1,0.55)
+
+local logoT = Instance.new("TextLabel",logoF)
+logoT.Size=UDim2.new(1,0,0,34); logoT.Position=UDim2.new(0,0,0,6)
+logoT.BackgroundTransparency=1; logoT.Text="BACON HUB"
+logoT.TextColor3=Color3.fromRGB(230,215,255); logoT.Font=Enum.Font.GothamBlack
+logoT.TextSize=17; logoT.ZIndex=5
+
+local verT = Instance.new("TextLabel",logoF)
+verT.Size=UDim2.new(1,0,0,16); verT.Position=UDim2.new(0,0,0,40)
+verT.BackgroundTransparency=1; verT.Text=CFG.Version
+verT.TextColor3=CFG.Purple; verT.Font=Enum.Font.Code
+verT.TextSize=10; verT.ZIndex=5
+
+-- Nav scroll
+local NavScroll = Instance.new("ScrollingFrame",Sidebar)
+NavScroll.Size=UDim2.new(1,-8,1,-90); NavScroll.Position=UDim2.new(0,4,0,88)
+NavScroll.BackgroundTransparency=1; NavScroll.BorderSizePixel=0
+NavScroll.ScrollBarThickness=2; NavScroll.ScrollBarImageColor3=CFG.Purple; NavScroll.ZIndex=4
+
+local NavLayout = Instance.new("UIListLayout",NavScroll)
+NavLayout.Padding=UDim.new(0,5); NavLayout.SortOrder=Enum.SortOrder.LayoutOrder
+NavLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+
+NavLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    NavScroll.CanvasSize = UDim2.new(0,0,0,NavLayout.AbsoluteContentSize.Y+8)
+end)
+
+-- ── Header bar ───────────────────────────
+local Header = Instance.new("Frame",Main)
+Header.Size=UDim2.new(1,-195,0,46); Header.Position=UDim2.new(0,195,0,0)
+Header.BackgroundColor3=Color3.fromRGB(9,8,18); Header.BackgroundTransparency=0.15
+Header.BorderSizePixel=0; Header.ZIndex=6
+Stroke(Header,CFG.Border,1,0)
+
+local hline = Instance.new("Frame",Header)
+hline.Size=UDim2.new(1,0,0,1); hline.Position=UDim2.new(0,0,1,-1)
+hline.BackgroundColor3=CFG.Purple; hline.BackgroundTransparency=0.55
+hline.BorderSizePixel=0; hline.ZIndex=7
+
+local TabTitle = Instance.new("TextLabel",Header)
+TabTitle.Size=UDim2.new(1,-90,1,0); TabTitle.Position=UDim2.new(0,15,0,0)
+TabTitle.BackgroundTransparency=1; TabTitle.Text="BACON HUB"
+TabTitle.TextColor3=Color3.fromRGB(200,185,255); TabTitle.Font=Enum.Font.GothamBold
+TabTitle.TextSize=14; TabTitle.TextXAlignment=Enum.TextXAlignment.Left; TabTitle.ZIndex=7
+
+-- Close / Minimize buttons
+local function CtrlBtn(icon, bg, xOff, cb)
+    local b = Instance.new("ImageButton",Header)
+    b.Size=UDim2.new(0,28,0,28); b.Position=UDim2.new(1,xOff,0.5,-14)
+    b.BackgroundColor3=bg; b.Image=icon; b.ImageTransparency=0.05
+    b.BorderSizePixel=0; b.ZIndex=8
+    Corner(b,14)
+    b.MouseEnter:Connect(function() TW(b,{BackgroundTransparency=0.25}) end)
+    b.MouseLeave:Connect(function() TW(b,{BackgroundTransparency=0}) end)
+    b.MouseButton1Click:Connect(cb)
+end
+CtrlBtn("rbxassetid://10152135063", Color3.fromRGB(215,45,45), -38, function() Root:Destroy() end)
+CtrlBtn("rbxassetid://97880448391331", Color3.fromRGB(70,52,130), -74, function()
+    Main.Visible=false; FloatBtn.Visible=true; State.Open=false
+end)
+
+-- ── Content area ─────────────────────────
+local Content = Instance.new("Frame",Main)
+Content.Size=UDim2.new(1,-195,1,-46); Content.Position=UDim2.new(0,195,0,46)
+Content.BackgroundTransparency=1; Content.ZIndex=3
+
+-- ══════════════════════════════════════════
+-- COMPONENT FACTORIES
+-- ══════════════════════════════════════════
+
+local function MakeTab(name)
+    local tab = Instance.new("ScrollingFrame",Content)
+    tab.Name=name; tab.Size=UDim2.new(1,-14,1,-8)
+    tab.Position=UDim2.new(0,7,0,4)
+    tab.BackgroundTransparency=1; tab.ScrollBarThickness=3
+    tab.ScrollBarImageColor3=CFG.Purple; tab.Visible=false; tab.ZIndex=4
+    local ly = Instance.new("UIListLayout",tab)
+    ly.Padding=UDim.new(0,8); ly.SortOrder=Enum.SortOrder.LayoutOrder
+    ly:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        tab.CanvasSize=UDim2.new(0,0,0,ly.AbsoluteContentSize.Y+16)
+    end)
+    return tab
+end
+
+local function MakeButton(parent, label, cb)
+    local btn = Instance.new("TextButton",parent)
+    btn.Size=UDim2.new(1,-6,0,42); btn.BackgroundColor3=CFG.BGItem
+    btn.Text=label; btn.TextColor3=Color3.fromRGB(190,178,220)
+    btn.Font=Enum.Font.GothamSemibold; btn.TextSize=13
+    btn.AutoButtonColor=false; btn.BorderSizePixel=0; btn.ZIndex=5
+    Corner(btn,8)
+    local st = Stroke(btn,CFG.Border,1,0)
+    local bar = Instance.new("Frame",btn)
+    bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0)
+    bar.BackgroundColor3=CFG.Purple; bar.BackgroundTransparency=1
+    bar.BorderSizePixel=0; bar.ZIndex=6
+    Corner(bar,3)
+    btn.MouseEnter:Connect(function()
+        TW(btn,{BackgroundColor3=Color3.fromRGB(20,16,36),TextColor3=Color3.fromRGB(220,205,255)})
+        TW(st,{Color=CFG.Purple,Transparency=0.45}); TW(bar,{BackgroundTransparency=0})
+    end)
+    btn.MouseLeave:Connect(function()
+        TW(btn,{BackgroundColor3=CFG.BGItem,TextColor3=Color3.fromRGB(190,178,220)})
+        TW(st,{Color=CFG.Border,Transparency=0}); TW(bar,{BackgroundTransparency=1})
+    end)
+    btn.MouseButton1Click:Connect(function()
+        local rip = Instance.new("Frame",btn)
+        rip.Size=UDim2.new(0,0,0,0); rip.AnchorPoint=Vector2.new(0.5,0.5)
+        rip.Position=UDim2.new(0.5,0,0.5,0); rip.BackgroundColor3=CFG.Purple
+        rip.BackgroundTransparency=0.8; rip.BorderSizePixel=0; rip.ZIndex=7
+        Corner(rip,50)
+        TW(rip,{Size=UDim2.new(2,0,5,0),BackgroundTransparency=1},0.4)
+        game.Debris:AddItem(rip,0.5)
+        cb()
+    end)
+    return btn
+end
+
+local function MakeToggle(parent, label, cb)
+    local c = Instance.new("Frame",parent)
+    c.Size=UDim2.new(1,-6,0,50); c.BackgroundColor3=CFG.BGItem
+    c.BorderSizePixel=0; c.ZIndex=5
+    Corner(c,8); local cs = Stroke(c,CFG.Border,1,0)
+
+    local lbl = Instance.new("TextLabel",c)
+    lbl.Size=UDim2.new(1,-80,1,0); lbl.Position=UDim2.new(0,14,0,0)
+    lbl.BackgroundTransparency=1; lbl.Text=label
+    lbl.TextColor3=Color3.fromRGB(190,178,220); lbl.Font=Enum.Font.GothamSemibold
+    lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=6
+
+    local track = Instance.new("Frame",c)
+    track.Size=UDim2.new(0,50,0,26); track.Position=UDim2.new(1,-62,0.5,-13)
+    track.BackgroundColor3=Color3.fromRGB(28,26,44); track.BorderSizePixel=0; track.ZIndex=6
+    Corner(track,14)
+
+    local ball = Instance.new("Frame",track)
+    ball.Size=UDim2.new(0,20,0,20); ball.Position=UDim2.new(0,3,0.5,-10)
+    ball.BackgroundColor3=Color3.fromRGB(110,95,155); ball.BorderSizePixel=0; ball.ZIndex=7
+    Corner(ball,10)
+
+    local hit = Instance.new("TextButton",c)
+    hit.Size=UDim2.new(1,0,1,0); hit.BackgroundTransparency=1
+    hit.Text=""; hit.ZIndex=8
+
+    local on = false
+    hit.MouseButton1Click:Connect(function()
+        on = not on
+        if on then
+            TW(ball,{Position=UDim2.new(0,27,0.5,-10),BackgroundColor3=Color3.new(1,1,1)},0.22,Enum.EasingStyle.Back)
+            TW(track,{BackgroundColor3=CFG.Purple},0.22)
+            TW(cs,{Color=CFG.Purple,Transparency=0.45},0.22)
+        else
+            TW(ball,{Position=UDim2.new(0,3,0.5,-10),BackgroundColor3=Color3.fromRGB(110,95,155)},0.22,Enum.EasingStyle.Back)
+            TW(track,{BackgroundColor3=Color3.fromRGB(28,26,44)},0.22)
+            TW(cs,{Color=CFG.Border,Transparency=0},0.22)
+        end
+        cb(on)
+    end)
+    return c
+end
+
+local function MakeSep(parent, lbl)
+    local f = Instance.new("Frame",parent)
+    f.Size=UDim2.new(1,-6,0,22); f.BackgroundTransparency=1; f.ZIndex=5
+    local line = Instance.new("Frame",f)
+    line.Size=UDim2.new(1,0,0,1); line.Position=UDim2.new(0,0,0.5,0)
+    line.BackgroundColor3=Color3.fromRGB(28,26,44); line.BorderSizePixel=0; line.ZIndex=5
+    if lbl and lbl~="" then
+        local w = #lbl*7.2+16
+        local bg = Instance.new("Frame",f)
+        bg.Size=UDim2.new(0,w,1,0); bg.Position=UDim2.new(0.5,-w/2,0,0)
+        bg.BackgroundColor3=CFG.BGItem; bg.BorderSizePixel=0; bg.ZIndex=6
+        local t = Instance.new("TextLabel",bg)
+        t.Size=UDim2.new(1,0,1,0); t.BackgroundTransparency=1; t.Text=lbl
+        t.TextColor3=CFG.Purple; t.Font=Enum.Font.GothamBold; t.TextSize=10; t.ZIndex=7
+    end
+end
+
+local function MakeNumInput(parent, label, hint, default, onApply)
+    local c = Instance.new("Frame",parent)
+    c.Size=UDim2.new(1,-6,0,58); c.BackgroundColor3=CFG.BGItem
+    c.BorderSizePixel=0; c.ZIndex=5
+    Corner(c,8); Stroke(c,CFG.Border,1,0)
+
+    local bar = Instance.new("Frame",c)
+    bar.Size=UDim2.new(0,3,0.55,0); bar.Position=UDim2.new(0,0,0.225,0)
+    bar.BackgroundColor3=CFG.Purple; bar.BackgroundTransparency=1
+    bar.BorderSizePixel=0; bar.ZIndex=6; Corner(bar,3)
+
+    local lbl = Instance.new("TextLabel",c)
+    lbl.Size=UDim2.new(0.6,0,0,22); lbl.Position=UDim2.new(0,12,0,7)
+    lbl.BackgroundTransparency=1; lbl.Text=label
+    lbl.TextColor3=Color3.fromRGB(190,178,220); lbl.Font=Enum.Font.GothamSemibold
+    lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=6
+
+    local hintL = Instance.new("TextLabel",c)
+    hintL.Size=UDim2.new(1,-12,0,13); hintL.Position=UDim2.new(0,12,0,29)
+    hintL.BackgroundTransparency=1; hintL.Text=hint or ""
+    hintL.TextColor3=Color3.fromRGB(90,80,130); hintL.Font=Enum.Font.Code
+    hintL.TextSize=9; hintL.TextXAlignment=Enum.TextXAlignment.Left; hintL.ZIndex=6
+
+    local ibg = Instance.new("Frame",c)
+    ibg.Size=UDim2.new(0,104,0,32); ibg.Position=UDim2.new(1,-118,0.5,-16)
+    ibg.BackgroundColor3=Color3.fromRGB(16,13,30); ibg.BorderSizePixel=0; ibg.ZIndex=6
+    Corner(ibg,7); local ibs = Stroke(ibg,CFG.Purple,1,0.55)
+
+    local box = Instance.new("TextBox",ibg)
+    box.Size=UDim2.new(1,-12,1,0); box.Position=UDim2.new(0,8,0,0)
+    box.BackgroundTransparency=1; box.Text=tostring(default)
+    box.TextColor3=CFG.PurpleLt; box.Font=Enum.Font.GothamBold
+    box.TextSize=14; box.TextXAlignment=Enum.TextXAlignment.Center
+    box.ClearTextOnFocus=false; box.ZIndex=7
+
+    box.Focused:Connect(function()
+        TW(ibs,{Transparency=0.1}); TW(bar,{BackgroundTransparency=0})
+    end)
+    box.FocusLost:Connect(function()
+        TW(ibs,{Transparency=0.55}); TW(bar,{BackgroundTransparency=1})
+        local v = tonumber(box.Text)
+        if v then
+            onApply(v)
+        else
+            box.Text = tostring(default)
+            Notify("❌ Erro","Digite um número válido!",2)
+        end
+    end)
+    return c
+end
+
+local function MakePlayerInput(parent, label, onConfirm)
+    local c = Instance.new("Frame",parent)
+    c.Size=UDim2.new(1,-6,0,72); c.BackgroundColor3=CFG.BGItem
+    c.BorderSizePixel=0; c.ZIndex=5
+    Corner(c,8); local cs = Stroke(c,CFG.Border,1,0)
+
+    local lbl = Instance.new("TextLabel",c)
+    lbl.Size=UDim2.new(1,-10,0,20); lbl.Position=UDim2.new(0,10,0,6)
+    lbl.BackgroundTransparency=1; lbl.Text=label
+    lbl.TextColor3=CFG.Purple; lbl.Font=Enum.Font.GothamBold
+    lbl.TextSize=11; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=6
+
+    local ibg = Instance.new("Frame",c)
+    ibg.Size=UDim2.new(1,-80,0,30); ibg.Position=UDim2.new(0,8,0,30)
+    ibg.BackgroundColor3=Color3.fromRGB(16,13,30); ibg.BorderSizePixel=0; ibg.ZIndex=6
+    Corner(ibg,6); local ibs = Stroke(ibg,CFG.Purple,1,0.6)
+
+    local box = Instance.new("TextBox",ibg)
+    box.Size=UDim2.new(1,-14,1,0); box.Position=UDim2.new(0,8,0,0)
+    box.BackgroundTransparency=1; box.Text=""
+    box.PlaceholderText="Nome do jogador..."
+    box.PlaceholderColor3=Color3.fromRGB(85,72,115)
+    box.TextColor3=Color3.fromRGB(220,210,255); box.Font=Enum.Font.GothamMedium
+    box.TextSize=12; box.TextXAlignment=Enum.TextXAlignment.Left
+    box.ClearTextOnFocus=false; box.ZIndex=7
+    box.Focused:Connect(function() TW(ibs,{Transparency=0.15}) end)
+    box.FocusLost:Connect(function() TW(ibs,{Transparency=0.6}) end)
+
+    local okbtn = Instance.new("TextButton",c)
+    okbtn.Size=UDim2.new(0,58,0,30); okbtn.Position=UDim2.new(1,-70,0,30)
+    okbtn.BackgroundColor3=CFG.PurpleDk; okbtn.Text="OK"
+    okbtn.TextColor3=Color3.new(1,1,1); okbtn.Font=Enum.Font.GothamBlack
+    okbtn.TextSize=13; okbtn.BorderSizePixel=0; okbtn.ZIndex=6
+    Corner(okbtn,6)
+    okbtn.MouseEnter:Connect(function() TW(okbtn,{BackgroundColor3=CFG.Purple}) end)
+    okbtn.MouseLeave:Connect(function() TW(okbtn,{BackgroundColor3=CFG.PurpleDk}) end)
+
+    local function tryFind()
+        local n = box.Text
+        if n=="" then Notify("❌","Digite o nome do jogador!",2); return end
+        local found
+        for _,p in ipairs(Players:GetPlayers()) do
+            if p.Name:lower()==n:lower() or p.DisplayName:lower()==n:lower() then found=p; break end
+        end
+        if not found then
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower():find(n:lower(),1,true) then found=p; break end
+            end
+        end
+        if found then
+            lbl.Text = label.." ✅ "..found.Name
+            TW(cs,{Color=CFG.Purple,Transparency=0.3})
+            onConfirm(found)
+        else
+            Notify("❌ Não encontrado","'"..n.."' não está no servidor!",3)
+            TW(ibs,{Color=Color3.fromRGB(255,55,55)},0.1)
+            task.delay(1, function() TW(ibs,{Color=CFG.Purple},0.3) end)
+        end
+    end
+    okbtn.MouseButton1Click:Connect(tryFind)
+    box.FocusLost:Connect(function(enter) if enter then tryFind() end end)
+    return c
+end
+
+-- Nav button factory
+local activeNav = nil
+local function MakeNav(label, emoji, tab)
+    local btn = Instance.new("TextButton",NavScroll)
+    btn.Size=UDim2.new(0,178,0,44); btn.BackgroundColor3=CFG.BGItem
+    btn.BackgroundTransparency=1; btn.Text=""; btn.ZIndex=5
+    Corner(btn,8)
+
+    local em = Instance.new("TextLabel",btn)
+    em.Size=UDim2.new(0,28,0,28); em.Position=UDim2.new(0,9,0.5,-14)
+    em.BackgroundTransparency=1; em.Text=emoji; em.TextSize=17; em.ZIndex=6
+
+    local lbl = Instance.new("TextLabel",btn)
+    lbl.Size=UDim2.new(1,-46,1,0); lbl.Position=UDim2.new(0,42,0,0)
+    lbl.BackgroundTransparency=1; lbl.Text=label
+    lbl.TextColor3=Color3.fromRGB(120,110,155); lbl.Font=Enum.Font.GothamMedium
+    lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.ZIndex=6
+
+    local ind = Instance.new("Frame",btn)
+    ind.Size=UDim2.new(0,3,0.58,0); ind.Position=UDim2.new(0,0,0.21,0)
+    ind.BackgroundColor3=CFG.Purple; ind.BackgroundTransparency=1
+    ind.BorderSizePixel=0; ind.ZIndex=6
+    Corner(ind,3)
+
+    local function activate()
+        if activeNav and activeNav~=btn then
+            -- deactivate previous
+            local prev = activeNav
+            TW(prev,{BackgroundTransparency=1})
+            for _,ch in ipairs(prev:GetChildren()) do
+                if ch:IsA("TextLabel") and ch~=em then TW(ch,{TextColor3=Color3.fromRGB(120,110,155)}) end
+                if ch:IsA("Frame") then TW(ch,{BackgroundTransparency=1}) end
+            end
+        end
+        TW(btn,{BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(18,14,32)})
+        TW(lbl,{TextColor3=Color3.fromRGB(228,215,255)})
+        TW(ind,{BackgroundTransparency=0})
+        TabTitle.Text = label:upper()
+        for _,t in ipairs(Content:GetChildren()) do if t:IsA("ScrollingFrame") then t.Visible=false end end
+        tab.Visible = true
+        activeNav = btn
+    end
+
+    btn.MouseEnter:Connect(function()
+        if activeNav~=btn then TW(btn,{BackgroundTransparency=0.55,BackgroundColor3=Color3.fromRGB(14,10,25)}) end
+    end)
+    btn.MouseLeave:Connect(function()
+        if activeNav~=btn then TW(btn,{BackgroundTransparency=1}) end
+    end)
+    btn.MouseButton1Click:Connect(activate)
+    return btn, activate
+end
+
+-- ══════════════════════════════════════════
+-- TAB: TROLL
+-- ══════════════════════════════════════════
+local TrollTab = MakeTab("Troll")
+
+MakeSep(TrollTab, "MOVIMENTO")
+
+MakeToggle(TrollTab, "⬛  No Clip", function(on)
+    if on then
+        State.NoClipConn = RunService.Stepped:Connect(function()
+            if Player.Character then
+                for _,p in ipairs(Player.Character:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide=false end
+                end
+            end
+        end)
+        Notify("No Clip","Ativado!",2)
+    else
+        if State.NoClipConn then State.NoClipConn:Disconnect(); State.NoClipConn=nil end
+        if Player.Character then
+            for _,p in ipairs(Player.Character:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide=true end
+            end
+        end
+        Notify("No Clip","Desativado!",2)
+    end
+end)
+
+MakeSep(TrollTab, "VELOCIDADE")
+
+MakeNumInput(TrollTab, "⚡ Velocidade", "Padrão: 16  |  Máximo: 5000", 16, function(v)
+    v = math.clamp(math.floor(v), 1, 5000)
+    if Player.Character then
+        local h = Player.Character:FindFirstChildOfClass("Humanoid")
+        if h then h.WalkSpeed = v end
+    end
+    Notify("⚡ Velocidade","Definida: "..v,2)
+end)
+
+MakeSep(TrollTab, "TAMANHO")
+
+MakeNumInput(TrollTab, "📏 Tamanho", "Padrão: 1  |  Ex: 0.5 pequeno · 3 gigante", 1, function(v)
+    v = math.clamp(v, 0.1, 10)
+    if Player.Character then
+        local h = Player.Character:FindFirstChildOfClass("Humanoid")
+        if h then
+            h.BodyDepthScale.Value = v
+            h.BodyHeightScale.Value = v
+            h.BodyWidthScale.Value = v
+            h.HeadScale.Value = v
+        end
+    end
+    Notify("📏 Tamanho","Definido: "..v,2)
+end)
+
+MakeSep(TrollTab, "GRAVIDADE")
+
+MakeToggle(TrollTab, "🌍  Gravidade Reduzida", function(on)
+    Workspace.Gravity = on and 20 or 196.2
+    Notify("Gravidade", on and "Gravidade reduzida!" or "Gravidade normal!",2)
+end)
+
+MakeSep(TrollTab, "ESPECTATE")
+
+MakePlayerInput(TrollTab, "👁️  Espectate — nome do jogador:", function(p)
+    State.SpectateTarget = p
+    Notify("👁️ Espectate","Alvo: "..p.Name,2)
+end)
+
+MakeButton(TrollTab, "▶  Iniciar Espectate", function()
+    if not State.SpectateTarget or not State.SpectateTarget.Character then
+        Notify("❌","Selecione um jogador válido!",2); return
+    end
+    if State.SpectateConn then State.SpectateConn:Disconnect() end
+    State.SpectateConn = RunService.RenderStepped:Connect(function()
+        local t = State.SpectateTarget
+        if t and t.Character then
+            local hrp = t.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                Camera.CameraType = Enum.CameraType.Custom
+                Camera.CFrame = CFrame.new(hrp.Position + Vector3.new(0,5,-10), hrp.Position)
+            end
+        end
+    end)
+    Notify("👁️ Espectate","Espectatando: "..State.SpectateTarget.Name,3)
+end)
+
+MakeButton(TrollTab, "⏹  Parar Espectate", function()
+    if State.SpectateConn then
+        State.SpectateConn:Disconnect(); State.SpectateConn=nil
+        Camera.CameraType = Enum.CameraType.Custom
+        Notify("👁️ Espectate","Parado!",2)
+    end
+end)
+
+MakeSep(TrollTab, "LAG JOGADOR")
+
+MakePlayerInput(TrollTab, "💥  Lag — nome do jogador:", function(p)
+    State.LagTarget = p
+    Notify("💥 Lag","Alvo: "..p.Name,2)
+end)
+
+MakeButton(TrollTab, "💥  Executar Lag Player", function()
+    if not State.LagTarget or not State.LagTarget.Character then
+        Notify("❌","Selecione um jogador válido!",2); return
+    end
+    local hrp = State.LagTarget.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then Notify("❌","Personagem não encontrado!",2); return end
+    task.spawn(function()
+        local bg = Instance.new("BodyGyro")
+        bg.MaxTorque = Vector3.new(1e9,1e9,1e9); bg.P = 1e9; bg.Parent = hrp
+        for _ = 1, 60 do
+            bg.CFrame = CFrame.Angles(math.random()*6.28, math.random()*6.28, math.random()*6.28)
+            task.wait(0.016)
+        end
+        pcall(function() bg:Destroy() end)
+        Notify("💥 Lag","Executado em: "..State.LagTarget.Name,2)
+    end)
+end)
+
+-- ══════════════════════════════════════════
+-- TAB: MÚSICAS
+-- ══════════════════════════════════════════
+local MusicTab = MakeTab("Musicas")
+
+-- Music player display
+local mpDisp = Instance.new("Frame",MusicTab)
+mpDisp.Size=UDim2.new(1,-6,0,72); mpDisp.BackgroundColor3=Color3.fromRGB(11,9,22)
+mpDisp.BorderSizePixel=0; mpDisp.ZIndex=5
+Corner(mpDisp,10); Stroke(mpDisp,CFG.Purple,1,0.45)
+
+local mpIcon = Instance.new("TextLabel",mpDisp)
+mpIcon.Size=UDim2.new(0,42,1,0); mpIcon.BackgroundTransparency=1
+mpIcon.Text="🎵"; mpIcon.TextSize=26; mpIcon.ZIndex=6
+
+local mpName = Instance.new("TextLabel",mpDisp)
+mpName.Size=UDim2.new(1,-54,0,26); mpName.Position=UDim2.new(0,48,0,10)
+mpName.BackgroundTransparency=1; mpName.Text="Nenhuma música tocando..."
+mpName.TextColor3=Color3.fromRGB(210,200,240); mpName.Font=Enum.Font.GothamBold
+mpName.TextSize=12; mpName.TextXAlignment=Enum.TextXAlignment.Left
+mpName.TextTruncate=Enum.TextTruncate.AtEnd; mpName.ZIndex=6
+
+-- Volume bar
+local volBg = Instance.new("Frame",mpDisp)
+volBg.Size=UDim2.new(0,120,0,5); volBg.Position=UDim2.new(0,48,0,48)
+volBg.BackgroundColor3=Color3.fromRGB(32,28,52); volBg.BorderSizePixel=0; volBg.ZIndex=6; Corner(volBg,3)
+
+local volFill = Instance.new("Frame",volBg)
+volFill.Size=UDim2.new(1,0,1,0); volFill.BackgroundColor3=CFG.Purple
+volFill.BorderSizePixel=0; volFill.ZIndex=7; Corner(volFill,3)
+
+local volLbl = Instance.new("TextLabel",mpDisp)
+volLbl.Size=UDim2.new(0,60,0,14); volLbl.Position=UDim2.new(0,174,0,43)
+volLbl.BackgroundTransparency=1; volLbl.Text="Vol: 100"
+volLbl.TextColor3=CFG.Purple; volLbl.Font=Enum.Font.Code; volLbl.TextSize=9; volLbl.ZIndex=6
+
+-- Volume drag
+local vDrag = false
+volBg.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then vDrag=true end end)
+UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then vDrag=false end end)
+UserInputService.InputChanged:Connect(function(i)
+    if vDrag and i.UserInputType==Enum.UserInputType.MouseMovement then
+        local rel = math.clamp((i.Position.X - volBg.AbsolutePosition.X)/volBg.AbsoluteSize.X,0,1)
+        volFill.Size = UDim2.new(rel,0,1,0)
+        volLbl.Text = "Vol: "..math.floor(rel*100)
+        if State.Music then State.Music.Volume = rel end
+    end
+end)
+
+-- Controls row
+local ctrlRow = Instance.new("Frame",MusicTab)
+ctrlRow.Size=UDim2.new(1,-6,0,40); ctrlRow.BackgroundTransparency=1; ctrlRow.ZIndex=5
+
+local function CtrlMusicBtn(text, bgc, xscale, cb)
+    local b = Instance.new("TextButton",ctrlRow)
+    b.Size=UDim2.new(0.48,0,1,0); b.Position=UDim2.new(xscale,0,0,0)
+    b.BackgroundColor3=bgc; b.Text=text; b.TextColor3=Color3.new(1,1,1)
+    b.Font=Enum.Font.GothamBold; b.TextSize=12; b.BorderSizePixel=0; b.ZIndex=6
+    Corner(b,8)
+    b.MouseButton1Click:Connect(cb)
+    return b
+end
+
+CtrlMusicBtn("⏹  PARAR", Color3.fromRGB(120,25,48), 0, function()
+    if State.Music then
+        State.Music:Destroy(); State.Music=nil
+        mpName.Text="Parado"; Notify("🎵","Música parada!",2)
+    end
+end)
+CtrlMusicBtn("⏮  ANTERIOR", CFG.PurpleDk, 0.52, function()
+    if #State.MusicHistory>1 and State.MusicIndex>1 then
+        State.MusicIndex = State.MusicIndex-1
+        local m = State.MusicHistory[State.MusicIndex]
+        if State.Music then State.Music:Destroy() end
+        local s = Instance.new("Sound",Workspace)
+        s.SoundId="rbxassetid://"..m.id; s.Volume=1; s.Looped=true; s:Play()
+        State.Music=s; mpName.Text=m.name
+    end
+end)
+
+MakeSep(MusicTab,"MÚSICAS")
+
+local MUSIC_LIST = {
+    {id="116818195548213", name="Running N Gunning (Loud)"},
+    {id="72213295707216",  name="Maiara e Maraisa - A Culpa É Nossa"},
+    {id="133190351316780", name="Os Barões - Minha Pequena"},
+    {id="95231249549633",  name="Lil Zé & Pcn Boladão - M1 X 7"},
+    {id="81130579221281",  name="LOOK AT ME! - XXXTENTACION"},
+    {id="122271413003280", name="OS CRIA TA DE RADINHO (MotoG)"},
+    {id="95159210486233",  name="MONTAGEM RITMADA 5 - DJ MANDRAKE"},
+    {id="96563587987867",  name="TROMBETA DAS ARÁBIA - DJ C4"},
+    {id="102717077255942", name="BEAT MASHUP - Rihanna vs Stereo Love"},
+    {id="113342607476775", name="BRAZINO GANG (XL, CATYARDS, INOX)"},
+    {id="99359762189958",  name="ZN MAROLADISSIMA 3 - MC PRR"},
+    {id="84817374705304",  name="MC PET - PAGANDO DE MOTORISTA"},
+    {id="121834630282105", name="MONTAGEM - VAI SENTANDO DEVAGAR"},
+}
+
+for _,m in ipairs(MUSIC_LIST) do
+    local mc = m
+    MakeButton(MusicTab, "▶  "..mc.name, function()
+        if State.Music then State.Music:Destroy() end
+        local s = Instance.new("Sound",Workspace)
+        s.SoundId="rbxassetid://"..mc.id; s.Volume=1; s.Looped=true; s:Play()
+        State.Music=s; mpName.Text=mc.name
+        table.insert(State.MusicHistory, mc); State.MusicIndex=#State.MusicHistory
+        Notify("🎵 Tocando",mc.name,3)
+    end)
+end
+
+-- ══════════════════════════════════════════
+-- TAB: EMOTES
+-- ══════════════════════════════════════════
+local EmotesTab = MakeTab("Emotes")
+
+MakeSep(EmotesTab,"EMOTES")
+
+local EMOTE_LIST = {
+    {name="Around Town",     id=3576747102},
+    {name="Fashionable",     id=3576745472},
+    {name="Swish",           id=3821527813},
+    {name="Top Rock",        id=3570535774},
+    {name="Fancy Feet",      id=3934988903},
+    {name="Idol",            id=4102317848},
+    {name="Sneaky",          id=3576754235},
+    {name="Robot",           id=3576721660},
+    {name="Louder",          id=3576751796},
+    {name="Twirl",           id=3716633898},
+    {name="Bodybuilder",     id=3994130516},
+    {name="Jacks",           id=3570649048},
+    {name="Shuffle",         id=4391208058},
+    {name="Dorky Dance",     id=4212499637},
+    {name="Flex Walk",       id=15506506103},
+    {name="Dizzy",           id=3934986896},
+    {name="Rock Star",       id=6533100850},
+    {name="Panini Dance",    id=5915781665},
+    {name="Elton John Piano",id=11453096488},
+    {name="Cartwheel",       id=10370929905},
+    {name="I see Kareem Groove", id=75367995814880},
+    {name="Extra 1",  id=133596366979822},
+    {name="Extra 2",  id=93511411593120},
+    {name="Extra 3",  id=15698511500},
+    {name="Extra 4",  id=16572756230},
+    {name="Extra 5",  id=78074267827823},
+    {name="Extra 6",  id=95317654766616},
+    {name="Extra 7",  id=112354510576428},
+    {name="Extra 8",  id=94428815809038},
+    {name="Extra 9",  id=97123113822381},
+    {name="Extra 10", id=115300061334912},
+    {name="Extra 11", id=117564534161906},
+    {name="Extra 12", id=138572458313208},
+    {name="Hakari Dance",    id=72479554413503},
+    {name="Extra 14", id=70635223083942},
+    {name="Extra 15", id=100297498958164},
+    {name="Extra 16", id=134584040095037},
+    {name="Extra 17", id=112746062636394},
+    {name="Extra 18", id=78755795767408},
+    {name="Extra 19", id=88834614877886},
+    {name="Extra 20", id=19746055344304},
+    {name="Extra 21", id=138386881919239},
+    {name="Extra 22", id=114899970878842},
+    {name="Extra 23", id=92376846011129},
+    {name="Extra 24", id=91380965860245},
+    {name="Extra 25", id=101573394483995},
+    {name="Extra 26", id=130998336536045},
+    {name="Extra 27", id=134311528115559},
+    {name="Extra 28", id=131763631172236},
+    {name="Extra 29", id=90101899912160},
+    {name="Extra 30", id=103040723950430},
+    {name="India Boat Kid",  id=128730689645069},
+    {name="Michael Myers",   id=113312074616410},
+}
+
+local function PlayEmote(id)
+    local char = Player.Character; if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
+    if hum.RigType == Enum.HumanoidRigType.R15 then
+        local ok,err = pcall(function() hum:PlayEmoteAndGetAnimTrackById(id) end)
+        if not ok then Notify("❌ Emote","Falhou ao executar!",2) end
+    else
+        Notify("⚠️ R6","Use R15 para emotes!",3)
+    end
+end
+
+for _,e in ipairs(EMOTE_LIST) do
+    local em = e
+    MakeButton(EmotesTab, "🕺  "..em.name, function()
+        PlayEmote(em.id)
+        Notify("🕺 Emote",em.name,2)
+    end)
+end
+
+-- ══════════════════════════════════════════
+-- TAB: CHAT GLOBAL
+-- ══════════════════════════════════════════
+local ChatInfoTab = MakeTab("ChatInfo")
+
+-- Painel info
+local ciF = Instance.new("Frame",ChatInfoTab)
+ciF.Size=UDim2.new(1,-6,0,270); ciF.BackgroundColor3=Color3.fromRGB(10,8,20)
+ciF.BorderSizePixel=0; ciF.ZIndex=5
+Corner(ciF,12); Stroke(ciF,CFG.Purple,1,0.3)
+
+local ciIcon = Instance.new("TextLabel",ciF)
+ciIcon.Size=UDim2.new(1,0,0,46); ciIcon.Position=UDim2.new(0,0,0,8)
+ciIcon.BackgroundTransparency=1; ciIcon.Text="🌍"; ciIcon.TextSize=34; ciIcon.ZIndex=6
+
+local ciTitle = Instance.new("TextLabel",ciF)
+ciTitle.Size=UDim2.new(1,-18,0,24); ciTitle.Position=UDim2.new(0,9,0,56)
+ciTitle.BackgroundTransparency=1; ciTitle.Text="Chat Global — Bacon Hub"
+ciTitle.TextColor3=CFG.PurpleLt; ciTitle.Font=Enum.Font.GothamBlack
+ciTitle.TextSize=15; ciTitle.TextXAlignment=Enum.TextXAlignment.Left; ciTitle.ZIndex=6
+
+local ciDesc = Instance.new("TextLabel",ciF)
+ciDesc.Size=UDim2.new(1,-18,0,110); ciDesc.Position=UDim2.new(0,9,0,84)
+ciDesc.BackgroundTransparency=1
+ciDesc.Text="Use o Chat Global do Bacon Hub para conversar com outros jogadores que também estão usando o script!\n\n💬 Converse com a comunidade\n👥 Faça novos amigos\n🎮 Combine coisas dentro do jogo"
+ciDesc.TextColor3=Color3.fromRGB(175,162,208); ciDesc.Font=Enum.Font.GothamMedium
+ciDesc.TextSize=12; ciDesc.TextWrapped=true
+ciDesc.TextXAlignment=Enum.TextXAlignment.Left; ciDesc.TextYAlignment=Enum.TextYAlignment.Top
+ciDesc.ZIndex=6
+
+local openChatBtn = Instance.new("TextButton",ciF)
+openChatBtn.Size=UDim2.new(1,-18,0,44); openChatBtn.Position=UDim2.new(0,9,0,212)
+openChatBtn.BackgroundColor3=CFG.Purple; openChatBtn.Text="💬  ABRIR CHAT GLOBAL"
+openChatBtn.TextColor3=Color3.new(1,1,1); openChatBtn.Font=Enum.Font.GothamBlack
+openChatBtn.TextSize=14; openChatBtn.BorderSizePixel=0; openChatBtn.ZIndex=6
+Corner(openChatBtn,10)
+openChatBtn.MouseEnter:Connect(function() TW(openChatBtn,{BackgroundColor3=CFG.PurpleLt}) end)
+openChatBtn.MouseLeave:Connect(function() TW(openChatBtn,{BackgroundColor3=CFG.Purple}) end)
+
+-- ── Chat Window (floating) ────────────────
+local CW = Instance.new("Frame")
+CW.Name="ChatWindow"; CW.Size=UDim2.new(0,400,0,520)
+CW.Position=UDim2.new(0,10,0,10)
+CW.BackgroundColor3=CFG.BG; CW.BorderSizePixel=0
+CW.Visible=false; CW.ZIndex=50; CW.Parent=Root
+Corner(CW,14); Stroke(CW,CFG.Purple,1.5,0.08)
+
+-- Film
+local cwFilm = Instance.new("Frame",CW)
+cwFilm.Size=UDim2.new(1,0,1,0); cwFilm.BackgroundColor3=Color3.new(0,0,0)
+cwFilm.BackgroundTransparency=0.3; cwFilm.BorderSizePixel=0; cwFilm.ZIndex=50
+
+-- Header
+local cwHdr = Instance.new("Frame",CW)
+cwHdr.Size=UDim2.new(1,0,0,48); cwHdr.BackgroundColor3=Color3.fromRGB(9,7,18)
+cwHdr.BackgroundTransparency=0; cwHdr.BorderSizePixel=0; cwHdr.ZIndex=55
+Corner(cwHdr,14)
+-- fix bottom corners
+local cwHdrFix = Instance.new("Frame",cwHdr)
+cwHdrFix.Size=UDim2.new(1,0,0,14); cwHdrFix.Position=UDim2.new(0,0,1,-14)
+cwHdrFix.BackgroundColor3=Color3.fromRGB(9,7,18); cwHdrFix.BorderSizePixel=0; cwHdrFix.ZIndex=55
+-- bottom line
+local cwHLine = Instance.new("Frame",cwHdr)
+cwHLine.Size=UDim2.new(1,0,0,1); cwHLine.Position=UDim2.new(0,0,1,0)
+cwHLine.BackgroundColor3=CFG.Purple; cwHLine.BackgroundTransparency=0.5
+cwHLine.BorderSizePixel=0; cwHLine.ZIndex=56
+
+local cwHIcon = Instance.new("TextLabel",cwHdr)
+cwHIcon.Size=UDim2.new(0,32,1,0); cwHIcon.Position=UDim2.new(0,10,0,0)
+cwHIcon.BackgroundTransparency=1; cwHIcon.Text="🌍"; cwHIcon.TextSize=20; cwHIcon.ZIndex=56
+
+local cwHTitle = Instance.new("TextLabel",cwHdr)
+cwHTitle.Size=UDim2.new(1,-100,1,0); cwHTitle.Position=UDim2.new(0,46,0,0)
+cwHTitle.BackgroundTransparency=1; cwHTitle.Text="Chat Global — Bacon Hub"
+cwHTitle.TextColor3=Color3.fromRGB(228,215,255); cwHTitle.Font=Enum.Font.GothamBlack
+cwHTitle.TextSize=14; cwHTitle.TextXAlignment=Enum.TextXAlignment.Left; cwHTitle.ZIndex=56
+
+-- Online dot
+local dot = Instance.new("Frame",cwHdr)
+dot.Size=UDim2.new(0,7,0,7); dot.Position=UDim2.new(0,48,0.5,6)
+dot.BackgroundColor3=Color3.fromRGB(70,255,110); dot.BorderSizePixel=0; dot.ZIndex=57
+Corner(dot,4)
+
+-- Minimize button "-"
+local cwMinimize = Instance.new("TextButton",cwHdr)
+cwMinimize.Size=UDim2.new(0,28,0,28); cwMinimize.Position=UDim2.new(1,-74,0.5,-14)
+cwMinimize.BackgroundColor3=Color3.fromRGB(60,48,100); cwMinimize.Text="—"
+cwMinimize.TextColor3=Color3.new(1,1,1); cwMinimize.Font=Enum.Font.GothamBlack
+cwMinimize.TextSize=12; cwMinimize.BorderSizePixel=0; cwMinimize.ZIndex=57
+Corner(cwMinimize,14)
+cwMinimize.MouseEnter:Connect(function() TW(cwMinimize,{BackgroundColor3=CFG.Purple}) end)
+cwMinimize.MouseLeave:Connect(function() TW(cwMinimize,{BackgroundColor3=Color3.fromRGB(60,48,100)}) end)
+
+-- Close button "✕"
+local cwClose = Instance.new("TextButton",cwHdr)
+cwClose.Size=UDim2.new(0,28,0,28); cwClose.Position=UDim2.new(1,-38,0.5,-14)
+cwClose.BackgroundColor3=Color3.fromRGB(180,30,48); cwClose.Text="✕"
+cwClose.TextColor3=Color3.new(1,1,1); cwClose.Font=Enum.Font.GothamBlack
+cwClose.TextSize=12; cwClose.BorderSizePixel=0; cwClose.ZIndex=57
+Corner(cwClose,14)
+cwClose.MouseEnter:Connect(function() TW(cwClose,{BackgroundColor3=Color3.fromRGB(220,50,70)}) end)
+cwClose.MouseLeave:Connect(function() TW(cwClose,{BackgroundColor3=Color3.fromRGB(180,30,48)}) end)
+cwClose.MouseButton1Click:Connect(function()
+    CW.Visible=false; openChatBtn.Text="💬  ABRIR CHAT GLOBAL"
+end)
+
+MakeDraggable(CW, cwHdr)
+
+-- Message area
+local cwScroll = Instance.new("ScrollingFrame",CW)
+cwScroll.Size=UDim2.new(1,-10,1,-118); cwScroll.Position=UDim2.new(0,5,0,52)
+cwScroll.BackgroundTransparency=1; cwScroll.BorderSizePixel=0
+cwScroll.ScrollBarThickness=3; cwScroll.ScrollBarImageColor3=CFG.Purple
+cwScroll.ScrollingDirection=Enum.ScrollingDirection.Y
+cwScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+cwScroll.CanvasSize=UDim2.new(0,0,0,0); cwScroll.ZIndex=55
+
+local cwLayout = Instance.new("UIListLayout",cwScroll)
+cwLayout.Padding=UDim.new(0,5); cwLayout.SortOrder=Enum.SortOrder.LayoutOrder
+
+local cwPad = Instance.new("UIPadding",cwScroll)
+cwPad.PaddingTop=UDim.new(0,5); cwPad.PaddingBottom=UDim.new(0,5)
+cwPad.PaddingLeft=UDim.new(0,4); cwPad.PaddingRight=UDim.new(0,4)
+
+-- Divider
+local cwDiv = Instance.new("Frame",CW)
+cwDiv.Size=UDim2.new(1,-18,0,1); cwDiv.Position=UDim2.new(0,9,1,-66)
+cwDiv.BackgroundColor3=CFG.Purple; cwDiv.BackgroundTransparency=0.55
+cwDiv.BorderSizePixel=0; cwDiv.ZIndex=55
+
+-- Footer
+local cwFoot = Instance.new("Frame",CW)
+cwFoot.Size=UDim2.new(1,0,0,62); cwFoot.Position=UDim2.new(0,0,1,-62)
+cwFoot.BackgroundColor3=Color3.fromRGB(9,7,18); cwFoot.BackgroundTransparency=0
+cwFoot.BorderSizePixel=0; cwFoot.ZIndex=55
+Corner(cwFoot,14)
+local cwFootFix = Instance.new("Frame",cwFoot)
+cwFootFix.Size=UDim2.new(1,0,0,14); cwFootFix.BackgroundColor3=Color3.fromRGB(9,7,18)
+cwFootFix.BorderSizePixel=0; cwFootFix.ZIndex=55
+
+-- Minimize logic (cwScroll, cwDiv, cwFoot all declared now)
+local cwMinimized = false
+cwMinimize.MouseButton1Click:Connect(function()
+    cwMinimized = not cwMinimized
+    if cwMinimized then
+        cwScroll.Visible = false
+        cwDiv.Visible    = false
+        cwFoot.Visible   = false
+        TW(CW,{Size=UDim2.new(0,400,0,48)},0.25,Enum.EasingStyle.Quad)
+        cwMinimize.Text  = "▲"
+    else
+        TW(CW,{Size=UDim2.new(0,400,0,520)},0.3,Enum.EasingStyle.Back)
+        task.delay(0.18,function()
+            cwScroll.Visible = true
+            cwDiv.Visible    = true
+            cwFoot.Visible   = true
+        end)
+        cwMinimize.Text = "—"
+    end
+end)
+
+-- My avatar in footer
+local cwAv = Instance.new("ImageLabel",cwFoot)
+cwAv.Size=UDim2.new(0,32,0,32); cwAv.Position=UDim2.new(0,10,0.5,-16)
+cwAv.BackgroundColor3=Color3.fromRGB(25,18,42); cwAv.BorderSizePixel=0; cwAv.ZIndex=56
+Corner(cwAv,16); Stroke(cwAv,CFG.Purple,1,0.5)
+task.spawn(function()
+    local s,img = pcall(function() return Players:GetUserThumbnailAsync(Player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100) end)
+    if s and img then cwAv.Image = img end
+end)
+
+-- Input box
+local cwInBg = Instance.new("Frame",cwFoot)
+cwInBg.Size=UDim2.new(1,-106,0,36); cwInBg.Position=UDim2.new(0,48,0.5,-18)
+cwInBg.BackgroundColor3=Color3.fromRGB(16,12,28); cwInBg.BorderSizePixel=0; cwInBg.ZIndex=56
+Corner(cwInBg,7); local cwInStroke = Stroke(cwInBg,CFG.Purple,1,0.6)
+
+local cwInput = Instance.new("TextBox",cwInBg)
+cwInput.Size=UDim2.new(1,-12,1,0); cwInput.Position=UDim2.new(0,8,0,0)
+cwInput.BackgroundTransparency=1; cwInput.Text=""
+cwInput.PlaceholderText="Digite sua mensagem..."
+cwInput.PlaceholderColor3=Color3.fromRGB(85,72,115)
+cwInput.TextColor3=Color3.fromRGB(228,218,255); cwInput.Font=Enum.Font.GothamMedium
+cwInput.TextSize=13; cwInput.TextXAlignment=Enum.TextXAlignment.Left
+cwInput.ClearTextOnFocus=false; cwInput.ZIndex=57
+cwInput.Focused:Connect(function() TW(cwInStroke,{Transparency=0.1}) end)
+cwInput.FocusLost:Connect(function() TW(cwInStroke,{Transparency=0.6}) end)
+
+-- char counter
+local cwCC = Instance.new("TextLabel",cwInBg)
+cwCC.Size=UDim2.new(0,44,0,11); cwCC.Position=UDim2.new(1,-46,0,2)
+cwCC.BackgroundTransparency=1; cwCC.Text="0/200"
+cwCC.TextColor3=Color3.fromRGB(90,78,125); cwCC.Font=Enum.Font.Code
+cwCC.TextSize=9; cwCC.ZIndex=57
+cwInput:GetPropertyChangedSignal("Text"):Connect(function()
+    local n = math.min(#cwInput.Text,200)
+    cwCC.Text=n.."/200"
+    cwCC.TextColor3 = n>=180 and Color3.fromRGB(255,90,70) or Color3.fromRGB(90,78,125)
+end)
+
+-- Send button
+local cwSend = Instance.new("TextButton",cwFoot)
+cwSend.Size=UDim2.new(0,48,0,36); cwSend.Position=UDim2.new(1,-54,0.5,-18)
+cwSend.BackgroundColor3=CFG.Purple; cwSend.Text="▶"
+cwSend.TextColor3=Color3.new(1,1,1); cwSend.Font=Enum.Font.GothamBlack
+cwSend.TextSize=16; cwSend.BorderSizePixel=0; cwSend.ZIndex=56
+Corner(cwSend,7)
+cwSend.MouseEnter:Connect(function() TW(cwSend,{BackgroundColor3=CFG.PurpleLt}) end)
+cwSend.MouseLeave:Connect(function() TW(cwSend,{BackgroundColor3=CFG.Purple}) end)
+
+-- ── Chat system ───────────────────────────
+local BANNED = {"porra","caralho","puta","fdp","buceta","merda","viado","cuzao","escroto",
+    "fuck","fucking","shit","bitch","asshole","dick","cunt","nigger","kys","kill yourself",
+    "puta madre","hijueputa","mierda","coño","pedofilo","estuprador"}
+local BLOCKED_LINKS = {"http://","https://","www.","discord.gg","discord.com","t.me",
+    "telegram","whatsapp","bit.ly","tinyurl","xvideos","pornhub","onlyfans",".com/",".gg/"}
+
+local function hasBadWord(txt)
+    local l = txt:lower()
+    for _,w in ipairs(BANNED) do if l:find(w,1,true) then return true end end
+    return false
+end
+local function hasLink(txt)
+    local l = txt:lower()
+    for _,w in ipairs(BLOCKED_LINKS) do if l:find(w,1,true) then return true end end
+    return false
+end
+
+local msgOrder = 0
+local function RenderMsg(data)
+    msgOrder = msgOrder + 1
+    local isMine = (data.UserId == Player.UserId)
+    local sideCol = isMine and CFG.Purple or Color3.fromRGB(75,195,255)
+
+    local row = Instance.new("Frame",cwScroll)
+    row.Size=UDim2.new(1,0,0,58); row.BackgroundColor3=Color3.fromRGB(11,9,22)
+    row.BackgroundTransparency=0.15; row.BorderSizePixel=0
+    row.LayoutOrder=data.Timestamp or msgOrder; row.ZIndex=56
+    Corner(row,8)
+
+    local side = Instance.new("Frame",row)
+    side.Size=UDim2.new(0,3,0.62,0); side.Position=UDim2.new(0,0,0.19,0)
+    side.BackgroundColor3=sideCol; side.BorderSizePixel=0; side.ZIndex=57; Corner(side,2)
+
+    local av = Instance.new("ImageLabel",row)
+    av.Size=UDim2.new(0,34,0,34); av.Position=UDim2.new(0,10,0.5,-17)
+    av.BackgroundColor3=Color3.fromRGB(22,16,38); av.BorderSizePixel=0; av.ZIndex=57
+    Corner(av,17); Stroke(av,sideCol,1.5,0)
+    task.spawn(function()
+        local s,img = pcall(function() return Players:GetUserThumbnailAsync(data.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100) end)
+        if s and img then av.Image=img end
+    end)
+
+    local uname = Instance.new("TextLabel",row)
+    uname.Size=UDim2.new(1,-60,0,18); uname.Position=UDim2.new(0,52,0,7)
+    uname.BackgroundTransparency=1
+    uname.Text=tostring(data.Username or "?")..(isMine and "  (você)" or "")
+    uname.TextColor3=isMine and CFG.PurpleLt or Color3.fromRGB(155,215,255)
+    uname.Font=Enum.Font.GothamBold; uname.TextSize=11
+    uname.TextXAlignment=Enum.TextXAlignment.Left; uname.ZIndex=57
+
+    local ts = Instance.new("TextLabel",row)
+    ts.Size=UDim2.new(0,48,0,14); ts.Position=UDim2.new(1,-54,0,8)
+    ts.BackgroundTransparency=1
+    ts.Text = data.Timestamp and os.date("%H:%M",data.Timestamp) or ""
+    ts.TextColor3=Color3.fromRGB(75,65,105); ts.Font=Enum.Font.Code; ts.TextSize=9
+    ts.TextXAlignment=Enum.TextXAlignment.Right; ts.ZIndex=57
+
+    local msg = Instance.new("TextLabel",row)
+    msg.Size=UDim2.new(1,-58,0,26); msg.Position=UDim2.new(0,52,0,26)
+    msg.BackgroundTransparency=1; msg.Text=tostring(data.Text or "")
+    msg.TextColor3=Color3.fromRGB(208,198,238); msg.Font=Enum.Font.GothamMedium
+    msg.TextSize=12; msg.TextXAlignment=Enum.TextXAlignment.Left
+    msg.TextWrapped=true; msg.TextTruncate=Enum.TextTruncate.AtEnd; msg.ZIndex=57
+
+    task.defer(function() cwScroll.CanvasPosition=Vector2.new(0,1e6) end)
+end
+
+local function SendChatMsg(text)
+    if text=="" then return end
+    local uid = Player.UserId
+    if State.ChatMutes[uid] and tick()<State.ChatMutes[uid] then
+        Notify("🔇 Chat","Você está suspenso por 10 min!",3); return
+    end
+    local now = tick()
+    if State.ChatLastMsg[uid] and (now-State.ChatLastMsg[uid])<2 then
+        Notify("⏳ Chat","Aguarde antes de enviar outra mensagem!",2); return
+    end
+    State.ChatLastMsg[uid] = now
+    local clean = text:sub(1,200)
+    if hasBadWord(clean) or hasLink(clean) then
+        State.ChatMutes[uid] = tick()+600
+        Notify("🚫 Chat","Mensagem bloqueada! Suspenso 10 min.",4); return
+    end
+    local data = {
+        Id        = HttpService:GenerateGUID(false),
+        UserId    = uid,
+        Username  = Player.Name,
+        Text      = clean,
+        Timestamp = os.time(),
+    }
+    pcall(function()
+        HttpService:PostAsync(CFG.DATABASE..".json",
+            HttpService:JSONEncode(data), Enum.HttpContentType.ApplicationJson)
+    end)
+    RenderMsg(data)
+    State.ChatSeenIds[data.Id] = true
+end
+
+local function FetchChat()
+    pcall(function()
+        local raw = HttpService:GetAsync(CFG.DATABASE..".json?orderBy=\"Timestamp\"&limitToLast=25")
+        if not raw or raw=="null" then return end
+        local ok,decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+        if not ok or type(decoded)~="table" then return end
+        local msgs = {}
+        for _,v in pairs(decoded) do
+            if type(v)=="table" and v.Id and v.Text then table.insert(msgs,v) end
+        end
+        table.sort(msgs, function(a,b) return (a.Timestamp or 0)<(b.Timestamp or 0) end)
+        for _,m in ipairs(msgs) do
+            if not State.ChatSeenIds[m.Id] then
+                State.ChatSeenIds[m.Id]=true
+                if m.UserId ~= Player.UserId then RenderMsg(m) end
+            end
+        end
+    end)
+end
+
+CW:GetPropertyChangedSignal("Visible"):Connect(function()
+    if CW.Visible then
+        if not State.ChatPollConn then
+            task.spawn(FetchChat)
+            State.ChatPollConn = RunService.Heartbeat:Connect(function()
+                local now = tick()
+                if now-State.ChatLastFetch>=3 then
+                    State.ChatLastFetch=now; task.spawn(FetchChat)
+                end
+            end)
+        end
+    else
+        if State.ChatPollConn then State.ChatPollConn:Disconnect(); State.ChatPollConn=nil end
+    end
+end)
+
+local function trySend()
+    local t = cwInput.Text
+    if #t>0 then SendChatMsg(t); cwInput.Text="" end
+end
+cwSend.MouseButton1Click:Connect(trySend)
+cwInput.FocusLost:Connect(function(enter) if enter then trySend() end end)
+
+openChatBtn.MouseButton1Click:Connect(function()
+    CW.Visible = not CW.Visible
+    openChatBtn.Text = CW.Visible and "✕  FECHAR CHAT GLOBAL" or "💬  ABRIR CHAT GLOBAL"
+    if CW.Visible then Notify("🌍 Chat","Chat Global aberto!",2) end
+end)
+
+-- ══════════════════════════════════════════
+-- TAB: SERVIDOR
+-- ══════════════════════════════════════════
+local ServerTab = MakeTab("Servidor")
+
+MakeSep(ServerTab,"SERVIDOR")
+
+MakeToggle(ServerTab,"💀  Lag Servidor",function(on)
+    if on then
+        State.ServerLagConn = RunService.Heartbeat:Connect(function()
+            local t=tick(); while tick()-t<0.08 do end
+        end)
+        Notify("Servidor","Lag ativado!",2)
+    else
+        if State.ServerLagConn then State.ServerLagConn:Disconnect(); State.ServerLagConn=nil end
+        Notify("Servidor","Lag desativado!",2)
+    end
+end)
+
+MakeButton(ServerTab,"🔄  Reiniciar Servidor (Rejoin)",function()
+    Notify("Servidor","Reiniciando...",2)
+    task.delay(1.5,function()
+        game:GetService("TeleportService"):Teleport(game.PlaceId,Player)
+    end)
+end)
+
+MakeButton(ServerTab,"🚪  Remover Todos do Servidor",function()
+    local admin = {"Bacon_Scripts","Riquelme_Scripts"}
+    local ok = false
+    for _,n in ipairs(admin) do if Player.Name==n then ok=true; break end end
+    if not ok then
+        Notify("❌ Sem Permissão","Apenas administradores podem executar essa função!",4)
+        return
+    end
+    Notify("🚪 Servidor","Removendo todos...",3)
+    for _,p in ipairs(Players:GetPlayers()) do
+        p:Kick("Servidor reiniciado pelo administrador.")
+    end
+end)
+
+-- ══════════════════════════════════════════
+-- TAB: SCRIPTS
+-- ══════════════════════════════════════════
+local ScriptsTab = MakeTab("Scripts")
+
+MakeSep(ScriptsTab,"UTILITÁRIOS")
+
+MakeButton(ScriptsTab,"🔧  SystemBroken (Admin)",function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/GZSSF/script3/95a45577475502cfbf546ae9ca8fc4f00b61eb83/script3"))()
+end)
+
+MakeButton(ScriptsTab,"✈️  Fly Mobile / PC",function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt"))()
+end)
+
+-- ══════════════════════════════════════════
+-- TAB: CRÉDITOS
+-- ══════════════════════════════════════════
+local CredTab = MakeTab("Creditos")
+
+local credF = Instance.new("Frame",CredTab)
+credF.Size=UDim2.new(1,-6,0,300); credF.BackgroundColor3=Color3.fromRGB(9,7,18)
+credF.BorderSizePixel=0; credF.ZIndex=5
+Corner(credF,12); Stroke(credF,CFG.Purple,1,0.35)
+
+local function CLine(txt, col, sz, yp)
+    local l = Instance.new("TextLabel",credF)
+    l.Size=UDim2.new(1,-24,0,sz+8); l.Position=UDim2.new(0,12,0,yp)
+    l.BackgroundTransparency=1; l.Text=txt; l.TextColor3=col
+    l.Font=Enum.Font.GothamBold; l.TextSize=sz
+    l.TextXAlignment=Enum.TextXAlignment.Left; l.ZIndex=6
+end
+CLine("BACON HUB  V2.00.0",          CFG.PurpleLt,                 17, 12)
+CLine("──────────────────────",           Color3.fromRGB(45,38,72),     11, 38)
+CLine("💻  Desenvolvimento",              CFG.Purple,                   11, 56)
+CLine("    Riquelme_Scripts",             Color3.fromRGB(218,208,252),  14, 72)
+CLine("👑  Dono",                         CFG.Purple,                   11, 100)
+CLine("    Bacon_Scripts",                Color3.fromRGB(218,208,252),  14, 116)
+CLine("──────────────────────",           Color3.fromRGB(45,38,72),     11, 145)
+CLine("📺  Canal / 💬 Discord",           CFG.Purple,                   11, 162)
+CLine("    @banconsentarebolando",        Color3.fromRGB(175,155,245),  12, 178)
+CLine("    discord.gg/KNxNqDCAxM",       Color3.fromRGB(175,155,245),  12, 196)
+CLine("──────────────────────",           Color3.fromRGB(45,38,72),     11, 216)
+CLine("✅  Status: ONLINE",               Color3.fromRGB(90,250,130),   12, 232)
+CLine("🕐  "..os.date("%d/%m/%Y"),        Color3.fromRGB(150,135,195),  11, 252)
+CLine("🔖  "..CFG.Version,               CFG.Purple,                   11, 272)
+
+-- ══════════════════════════════════════════
+-- REGISTER NAV
+-- ══════════════════════════════════════════
+local _,actTroll   = MakeNav("Troll",       "😈", TrollTab)
+local _,actMusic   = MakeNav("Músicas",     "🎵", MusicTab)
+local _,actEmotes  = MakeNav("Emotes",      "🕺", EmotesTab)
+local _,actChat    = MakeNav("Chat Global", "🌍", ChatInfoTab)
+local _,actServer  = MakeNav("Servidor",    "🌐", ServerTab)
+local _,actScripts = MakeNav("Scripts",     "⚙️",  ScriptsTab)
+local _,actCreds   = MakeNav("Créditos",    "⭐", CredTab)
+
+-- ══════════════════════════════════════════
+-- LOGIN LOGIC
+-- ══════════════════════════════════════════
+enterBtn.MouseButton1Click:Connect(function()
+    if not enterBtn.Active then return end
+    enterBtn.Active = false
+    enterBtn.Text   = "CARREGANDO..."
+    task.spawn(function()
+        TW(pgFill,{Size=UDim2.new(1,0,1,0)},0.85,Enum.EasingStyle.Quad)
+        task.wait(0.95)
+        TW(Login,{Size=UDim2.new(0,0,0,0),BackgroundTransparency=1},0.45,Enum.EasingStyle.Back)
+        task.wait(0.5)
+        Login.Visible = false
+        FloatBtn.Visible = true
+        FloatBtn.Size    = UDim2.new(0,0,0,0)
+        TW(FloatBtn,{Size=UDim2.new(0,55,0,55)},0.5,Enum.EasingStyle.Elastic)
+        Notify("🥓 Bacon Hub","Bem-vindo, "..Player.Name.."!",4)
+    end)
+end)
+
+FloatBtn.MouseButton1Click:Connect(function()
+    State.Open = not State.Open
+    if State.Open then
+        Main.Visible = true
+        Main.Size    = UDim2.new(0,0,0,0)
+        TW(Main,{Size=UDim2.new(0,700,0,470)},0.38,Enum.EasingStyle.Back)
+        FloatBtn.Visible = false
+        actTroll()  -- open troll tab by default
+    else
+        TW(Main,{Size=UDim2.new(0,0,0,0)},0.3,Enum.EasingStyle.Back)
+        task.delay(0.35,function()
+            Main.Visible  = false
+            FloatBtn.Visible = true
+        end)
+    end
+end)
+
+-- Default tab shown in login screen
+CredTab.Visible = true
+TabTitle.Text   = "CRÉDITOS"
+
+print("[BaconHub] V2.00.0 carregado com sucesso!")
